@@ -40,7 +40,7 @@ func (s *TransformedShape) Intersect(r Ray) Hit {
 		normal = normal.Negate()
 		inside = true
 	}
-	ray := Ray{position, normal}
+	ray := Ray{position, normal, r.Time}
 	info := HitInfo{shape, position, normal, ray, material, inside}
 	hit.T = position.Sub(r.Origin).Length()
 	hit.HitInfo = &info

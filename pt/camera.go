@@ -10,6 +10,8 @@ type Camera struct {
 	m              float64
 	focalDistance  float64
 	apertureRadius float64
+	shutterOpen    float64
+	shutterClose   float64
 }
 
 func LookAt(eye, center, up Vector, fovy float64) Camera {
@@ -25,6 +27,17 @@ func LookAt(eye, center, up Vector, fovy float64) Camera {
 func (c *Camera) SetFocus(focalPoint Vector, apertureRadius float64) {
 	c.focalDistance = focalPoint.Sub(c.p).Length()
 	c.apertureRadius = apertureRadius
+}
+
+// SetShutter sets the camera's shutter open and close times. Each cast ray
+// is assigned a time sampled uniformly from [open, close]; moving shapes are
+// positioned at the ray's time during intersection. The default (0, 0) is a
+// zero-duration shutter: every ray gets time 0 and rendering is unchanged.
+// A zero-length interval (open == close) freezes the scene at that instant;
+// the interval may lie anywhere on the time axis, including negative values.
+func (c *Camera) SetShutter(open, close float64) {
+	c.shutterOpen = open
+	c.shutterClose = close
 }
 
 func (c *Camera) CastRay(x, y, w, h int, u, v float64, rnd *rand.Rand) Ray {
@@ -45,5 +58,9 @@ func (c *Camera) CastRay(x, y, w, h int, u, v float64, rnd *rand.Rand) Ray {
 		p = p.Add(c.v.MulScalar(math.Sin(angle) * radius))
 		d = focalPoint.Sub(p).Normalize()
 	}
-	return Ray{p, d}
+	time := c.shutterOpen
+	if c.shutterClose != c.shutterOpen {
+		time += rnd.Float64() * (c.shutterClose - c.shutterOpen)
+	}
+	return Ray{p, d, time}
 }

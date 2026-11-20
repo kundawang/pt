@@ -25,6 +25,12 @@ type Renderer struct {
 	FireflyThreshold   float64
 	NumCPU             int
 	Verbose            bool
+	// Seed, when non-zero, makes rendering deterministic: goroutine i of
+	// run n uses a random source seeded from Seed, n and i. The same Seed,
+	// NumCPU and SamplesPerPixel then always produce identical output.
+	// The default (0) keeps the previous time-based seeding.
+	Seed       int64
+	runCounter int
 }
 
 func NewRenderer(scene *Scene, camera *Camera, sampler Sampler, w, h int) *Renderer {
@@ -61,9 +67,16 @@ func (r *Renderer) run() {
 	r.printf("%d x %d pixels, %d spp, %d cores\n", w, h, spp, ncpu)
 	start := time.Now()
 	scene.rays = 0
+	runCounter := r.runCounter
+	r.runCounter++
 	for i := 0; i < ncpu; i++ {
 		go func(i int) {
-			rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+			var rnd *rand.Rand
+			if r.Seed != 0 {
+				rnd = rand.New(rand.NewSource(r.Seed*1000003 + int64(runCounter*ncpu+i)))
+			} else {
+				rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+			}
 			for y := i; y < h; y += ncpu {
 				for x := 0; x < w; x++ {
 					if r.StratifiedSampling {

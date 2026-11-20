@@ -134,8 +134,8 @@ func (s *DefaultSampler) sampleLights(scene *Scene, n Ray, rnd *rand.Rand) Color
 		}
 		return result
 	} else {
-		// pick a random light
-		light := scene.Lights[rand.Intn(nLights)]
+		// pick a random light (use the local rng so renders stay deterministic)
+		light := scene.Lights[rnd.Intn(nLights)]
 		return s.sampleLight(scene, n, rnd, light).MulScalar(float64(nLights))
 	}
 }
@@ -174,8 +174,8 @@ func (s *DefaultSampler) sampleLight(scene *Scene, n Ray, rnd *rand.Rand, light 
 		}
 	}
 
-	// construct ray toward light point
-	ray := Ray{n.Origin, point.Sub(n.Origin).Normalize()}
+	// construct ray toward light point (at the same instant as the hit)
+	ray := Ray{n.Origin, point.Sub(n.Origin).Normalize(), n.Time}
 
 	// get cosine term
 	diffuse := ray.Direction.Dot(n.Direction)

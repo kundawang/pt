@@ -147,7 +147,7 @@ func (a Matrix) MulDirection(b Vector) Vector {
 }
 
 func (a Matrix) MulRay(b Ray) Ray {
-	return Ray{a.MulPosition(b.Origin), a.MulDirection(b.Direction)}
+	return Ray{a.MulPosition(b.Origin), a.MulDirection(b.Direction), b.Time}
 }
 
 func (a Matrix) MulBox(box Box) Box {

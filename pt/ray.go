@@ -7,6 +7,10 @@ import (
 
 type Ray struct {
 	Origin, Direction Vector
+	// Time is the instant (in scene time, e.g. within the camera's shutter
+	// interval) at which the ray exists. Moving shapes use it to position
+	// themselves during intersection. Zero for static scenes.
+	Time float64
 }
 
 func (r Ray) Position(t float64) Vector {
@@ -14,11 +18,11 @@ func (r Ray) Position(t float64) Vector {
 }
 
 func (n Ray) Reflect(i Ray) Ray {
-	return Ray{n.Origin, n.Direction.Reflect(i.Direction)}
+	return Ray{n.Origin, n.Direction.Reflect(i.Direction), i.Time}
 }
 
 func (n Ray) Refract(i Ray, n1, n2 float64) Ray {
-	return Ray{n.Origin, n.Direction.Refract(i.Direction, n1, n2)}
+	return Ray{n.Origin, n.Direction.Refract(i.Direction, n1, n2), i.Time}
 }
 
 func (n Ray) Reflectance(i Ray, n1, n2 float64) float64 {
@@ -34,11 +38,11 @@ func (r Ray) WeightedBounce(u, v float64, rnd *rand.Rand) Ray {
 	d = d.Add(s.MulScalar(radius * math.Cos(theta)))
 	d = d.Add(t.MulScalar(radius * math.Sin(theta)))
 	d = d.Add(r.Direction.MulScalar(math.Sqrt(1 - u)))
-	return Ray{r.Origin, d}
+	return Ray{r.Origin, d, r.Time}
 }
 
 func (r Ray) ConeBounce(theta, u, v float64, rnd *rand.Rand) Ray {
-	return Ray{r.Origin, Cone(r.Direction, theta, u, v, rnd)}
+	return Ray{r.Origin, Cone(r.Direction, theta, u, v, rnd), r.Time}
 }
 
 func (i Ray) Bounce(info *HitInfo, u, v float64, bounceType BounceType, rnd *rand.Rand) (Ray, bool, float64) {
