@@ -1,0 +1,6 @@
+# regression-oob-index.obj - malicious OBJ.
+# Face references index 9 but only one vertex is defined. The upstream
+# pt.LoadOBJ panics with "runtime error: index out of range"; the safety
+# checker must reject at StageIndex before the loader ever runs.
+v 0.0 0.0 0.0
+f 1 5 9
