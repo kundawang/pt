@@ -50,14 +50,17 @@ type DefaultSampler struct {
 }
 
 func (s *DefaultSampler) Sample(scene *Scene, ray Ray, rnd *rand.Rand) Color {
-	return s.sample(scene, ray, true, s.FirstHitSamples, 0, rnd)
+	return s.sample(scene, ray, true, s.FirstHitSamples, 0, rnd, true)
 }
 
-func (s *DefaultSampler) sample(scene *Scene, ray Ray, emission bool, samples, depth int, rnd *rand.Rand) Color {
+func (s *DefaultSampler) sample(scene *Scene, ray Ray, emission bool, samples, depth int, rnd *rand.Rand, primary bool) Color {
 	if depth > s.MaxBounces {
 		return Black
 	}
-	hit := scene.Intersect(ray)
+	// The outermost invocation traces the camera (primary) ray; every
+	// recursive call and the explicit light probes below are
+	// secondary rays.
+	hit := scene.intersect(ray, primary)
 	if !hit.Ok() {
 		return s.sampleEnvironment(scene, ray)
 	}
@@ -90,13 +93,13 @@ func (s *DefaultSampler) sample(scene *Scene, ray Ray, emission bool, samples, d
 				}
 				if p > 0 && reflected {
 					// specular
-					indirect := s.sample(scene, newRay, reflected, 1, depth+1, rnd)
+					indirect := s.sample(scene, newRay, reflected, 1, depth+1, rnd, false)
 					tinted := indirect.Mix(material.Color.Mul(indirect), material.Tint)
 					result = result.Add(tinted.MulScalar(p))
 				}
 				if p > 0 && !reflected {
 					// diffuse
-					indirect := s.sample(scene, newRay, reflected, 1, depth+1, rnd)
+					indirect := s.sample(scene, newRay, reflected, 1, depth+1, rnd, false)
 					direct := Black
 					if s.DirectLighting {
 						direct = s.sampleLights(scene, info.Ray, rnd)
@@ -184,7 +187,7 @@ func (s *DefaultSampler) sampleLight(scene *Scene, n Ray, rnd *rand.Rand, light 
 	}
 
 	// check for light visibility
-	hit := scene.Intersect(ray)
+	hit := scene.intersectSecondary(ray)
 	if !hit.Ok() || hit.Shape != light {
 		return Black
 	}

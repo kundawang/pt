@@ -16,7 +16,9 @@ func NewTree(shapes []Shape) *Tree {
 	defer fmt.Println("OK")
 	box := BoxForShapes(shapes)
 	node := NewNode(shapes)
-	node.Split(0)
+	if len(shapes) > 0 {
+		node.Split(0)
+	}
 	return &Tree{box, node}
 }
 

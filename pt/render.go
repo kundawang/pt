@@ -1,139 +1,39 @@
 package pt
 
 import (
-	"fmt"
 	"image"
-	"math"
-	"math/rand"
 	"runtime"
-	"strings"
-	"sync"
-	"time"
 )
 
-func showProgress(start time.Time, rays uint64, i, h int) {
-	pct := int(100 * float64(i) / float64(h))
-	elapsed := time.Since(start)
-	rps := float64(rays) / elapsed.Seconds()
-	fmt.Printf("\r%4d / %d (%3d%%) [", i, h, pct)
-	for p := 0; p < 100; p += 3 {
-		if pct > p {
-			fmt.Print("=")
-		} else {
-			fmt.Print(" ")
-		}
-	}
-	fmt.Printf("] %s %s ", DurationString(elapsed), NumberString(rps))
-}
-
+// render keeps the historical package-level signature and renders one
+// iteration into the supplied buffer. It is a thin adapter over
+// Renderer so the observability counters cover both code paths.
 func render(scene *Scene, camera *Camera, sampler Sampler, samplesPerPixel int, buf *Buffer) {
-	w, h := buf.W, buf.H
-	ncpu := runtime.NumCPU()
-	runtime.GOMAXPROCS(ncpu)
-	scene.Compile()
-	ch := make(chan int, h)
-	absSamples := int(math.Abs(float64(samplesPerPixel)))
-	fmt.Printf("%d x %d pixels, %d spp, %d cores\n", w, h, absSamples, ncpu)
-	start := time.Now()
-	scene.rays = 0
-	for i := 0; i < ncpu; i++ {
-		go func(i int) {
-			rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-			for y := i; y < h; y += ncpu {
-				for x := 0; x < w; x++ {
-					if samplesPerPixel <= 0 {
-						// random subsampling
-						for i := 0; i < absSamples; i++ {
-							fu := rnd.Float64()
-							fv := rnd.Float64()
-							ray := camera.CastRay(x, y, w, h, fu, fv, rnd)
-							sample := sampler.Sample(scene, ray, rnd)
-							buf.AddSample(x, y, sample)
-						}
-					} else {
-						// stratified subsampling
-						n := int(math.Sqrt(float64(samplesPerPixel)))
-						for u := 0; u < n; u++ {
-							for v := 0; v < n; v++ {
-								fu := (float64(u) + 0.5) / float64(n)
-								fv := (float64(v) + 0.5) / float64(n)
-								ray := camera.CastRay(x, y, w, h, fu, fv, rnd)
-								sample := sampler.Sample(scene, ray, rnd)
-								buf.AddSample(x, y, sample)
-							}
-						}
-					}
-					v := buf.Variance(x, y)
-					if v.R < 0.3 && v.G < 0.3 && v.B < 0.3 {
-						continue
-					}
-					for i := 0; i < 128; i++ {
-						fu := rnd.Float64()
-						fv := rnd.Float64()
-						ray := camera.CastRay(x, y, w, h, fu, fv, rnd)
-						sample := sampler.Sample(scene, ray, rnd)
-						buf.AddSample(x, y, sample)
-					}
-				}
-				ch <- 1
-			}
-		}(i)
-	}
-	showProgress(start, scene.RayCount(), 0, h)
-	for i := 0; i < h; i++ {
-		<-ch
-		showProgress(start, scene.RayCount(), i+1, h)
-	}
-	fmt.Println()
+	r := NewRenderer(scene, camera, sampler, buf.W, buf.H)
+	r.Buffer = buf
+	r.SamplesPerPixel = samplesPerPixel
+	r.NumCPU = runtime.NumCPU()
+	r.Verbose = true
+	r.Run()
 }
 
-// func Render(scene *Scene, camera *Camera, sampler Sampler, w, h, samplesPerPixel int) image.Image {
-// 	pixels := render(scene, camera, sampler, w, h, samplesPerPixel)
-// 	return pixelsToImage(pixels, w, h, 1)
-// }
-
-func writeImage(path string, im image.Image, wg *sync.WaitGroup) {
-	defer wg.Done()
-	if err := SavePNG(path, im); err != nil {
-		panic(err)
-	}
-}
-
+// IterativeRender renders iterations iterations into a single
+// accumulating buffer, writing a PNG after every pass. It preserves
+// the original package-level API used by every example.
 func IterativeRender(pathTemplate string, iterations int, scene *Scene, camera *Camera, sampler Sampler, w, h, samplesPerPixel int) {
-	var wg sync.WaitGroup
-	scene.Compile()
-	buf := NewBuffer(w, h)
-	for i := 1; i <= iterations; i++ {
-		fmt.Printf("\n[Iteration %d of %d]\n", i, iterations)
-		render(scene, camera, sampler, samplesPerPixel, buf)
-		im := buf.Image()
-		path := pathTemplate
-		if strings.Contains(path, "%") {
-			path = fmt.Sprintf(pathTemplate, i)
-		}
-		wg.Add(1)
-		go writeImage(path, im, &wg)
-	}
-	wg.Wait()
+	r := NewRenderer(scene, camera, sampler, w, h)
+	r.SamplesPerPixel = samplesPerPixel
+	r.NumCPU = runtime.NumCPU()
+	r.Verbose = true
+	r.IterativeRender(pathTemplate, iterations)
 }
 
-// func CallbackRender(scene *Scene, camera *Camera, sampler Sampler, w, h, samplesPerPixel int) <-chan image.Image {
-// 	ch := make(chan image.Image)
-// 	go func() {
-// 		scene.Compile()
-// 		pixels := make([]Color, w*h)
-// 		for i := 1; ; i++ {
-// 			frame := render(scene, camera, sampler, w, h, samplesPerPixel)
-// 			for y := 0; y < h; y++ {
-// 				for x := 0; x < w; x++ {
-// 					index := y*w + x
-// 					pixels[index] = pixels[index].Add(frame[index])
-// 				}
-// 			}
-// 			scale := 1 / float64(i)
-// 			result := pixelsToImage(pixels, w, h, scale)
-// 			ch <- result
-// 		}
-// 	}()
-// 	return ch
-// }
+// Render renders a single frame and returns the resulting image. It is
+// a convenience wrapper around Renderer.
+func Render(scene *Scene, camera *Camera, sampler Sampler, w, h, samplesPerPixel int) image.Image {
+	r := NewRenderer(scene, camera, sampler, w, h)
+	r.SamplesPerPixel = samplesPerPixel
+	r.NumCPU = runtime.NumCPU()
+	r.Verbose = true
+	return r.Render()
+}
