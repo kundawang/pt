@@ -28,6 +28,10 @@ func LoadOBJ(path string, parent Material) (*Mesh, error) {
 	vs := make([]Vector, 1, 1024)  // 1-based indexing
 	vts := make([]Vector, 1, 1024) // 1-based indexing
 	vns := make([]Vector, 1, 1024) // 1-based indexing
+	// Per-vertex colors from "v x y z r g b" lines. vcs[i] is only used
+	// when vcsOk[i] is true; the 1-based indexing matches vs.
+	vcs := make([]Color, 1, 1024)
+	vcsOk := make([]bool, 1, 1024)
 	var triangles []*Triangle
 	materials := make(map[string]*Material)
 	material := &parent
@@ -54,6 +58,16 @@ func LoadOBJ(path string, parent Material) (*Mesh, error) {
 			f := ParseFloats(args)
 			v := Vector{f[0], f[1], f[2]}
 			vs = append(vs, v)
+			// Optional per-vertex color: "v x y z r g b" (optionally with a
+			// fourth weight component, which is ignored). Colors are stored
+			// alongside the vertex, keeping the same 1-based ordering.
+			if len(f) >= 6 {
+				vcs = append(vcs, Color{f[3], f[4], f[5]})
+				vcsOk = append(vcsOk, true)
+			} else {
+				vcs = append(vcs, Color{})
+				vcsOk = append(vcsOk, false)
+			}
 		case "vt":
 			f := ParseFloats(args)
 			v := Vector{f[0], f[1], 0}
@@ -85,6 +99,17 @@ func LoadOBJ(path string, parent Material) (*Mesh, error) {
 				t.N1 = vns[fvns[i1]]
 				t.N2 = vns[fvns[i2]]
 				t.N3 = vns[fvns[i3]]
+				// Copy vertex colors in corner order; missing ones simply
+				// stay unset and fall back to the material color.
+				if vcsOk[fvs[i1]] {
+					t.SetVertexColor(0, vcs[fvs[i1]])
+				}
+				if vcsOk[fvs[i2]] {
+					t.SetVertexColor(1, vcs[fvs[i2]])
+				}
+				if vcsOk[fvs[i3]] {
+					t.SetVertexColor(2, vcs[fvs[i3]])
+				}
 				t.FixNormals()
 				triangles = append(triangles, &t)
 			}

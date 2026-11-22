@@ -1,10 +1,16 @@
 package pt
 
+import "math"
+
 type Triangle struct {
 	Material   *Material
 	V1, V2, V3 Vector
 	N1, N2, N3 Vector
 	T1, T2, T3 Vector
+	C1, C2, C3 Color
+	// c1-c3 record whether a vertex color was configured. The zero Color is
+	// a valid black vertex color, so presence cannot be inferred from value.
+	c1, c2, c3 bool
 }
 
 func NewTriangle(v1, v2, v3, t1, t2, t3 Vector, material Material) *Triangle {
@@ -22,6 +28,93 @@ func NewTriangle(v1, v2, v3, t1, t2, t3 Vector, material Material) *Triangle {
 
 func (t *Triangle) Vertices() (Vector, Vector, Vector) {
 	return t.V1, t.V2, t.V3
+}
+
+// sanitizeColor guarantees a finite color in [0, 1]. Non-finite components
+// (NaN, +Inf, -Inf) become 0 and out-of-range components are clamped, so bad
+// input can never propagate NaN into the renderer.
+func sanitizeColor(c Color) Color {
+	if math.IsNaN(c.R) || math.IsInf(c.R, 0) {
+		c.R = 0
+	}
+	if math.IsNaN(c.G) || math.IsInf(c.G, 0) {
+		c.G = 0
+	}
+	if math.IsNaN(c.B) || math.IsInf(c.B, 0) {
+		c.B = 0
+	}
+	return Color{Clamp(c.R, 0, 1), Clamp(c.G, 0, 1), Clamp(c.B, 0, 1)}
+}
+
+// SetVertexColors configures per-vertex colors, one per triangle corner, in
+// the same order as V1, V2, V3. The colors are interpolated at a hit point
+// using its barycentric coordinates. Values are sanitized (non-finite to 0,
+// out-of-range clamped to [0, 1]) before being stored.
+func (t *Triangle) SetVertexColors(c1, c2, c3 Color) {
+	t.C1, t.C2, t.C3 = sanitizeColor(c1), sanitizeColor(c2), sanitizeColor(c3)
+	t.c1, t.c2, t.c3 = true, true, true
+}
+
+// SetVertexColor configures the color of a single vertex: index 0, 1 or 2
+// corresponds to V1, V2, V3. Other indices are ignored. Vertices without a
+// configured color fall back to the material color during interpolation.
+func (t *Triangle) SetVertexColor(index int, c Color) {
+	c = sanitizeColor(c)
+	switch index {
+	case 0:
+		t.C1, t.c1 = c, true
+	case 1:
+		t.C2, t.c2 = c, true
+	case 2:
+		t.C3, t.c3 = c, true
+	}
+}
+
+// ClearVertexColors removes any configured per-vertex colors, restoring the
+// material/texture-only behavior.
+func (t *Triangle) ClearVertexColors() {
+	t.C1, t.C2, t.C3 = Color{}, Color{}, Color{}
+	t.c1, t.c2, t.c3 = false, false, false
+}
+
+// HasVertexColors reports whether at least one vertex color is configured.
+func (t *Triangle) HasVertexColors() bool {
+	return t.c1 || t.c2 || t.c3
+}
+
+// VertexColorAt returns the per-vertex color interpolated with the
+// barycentric coordinates of p, in linear color space. Vertex colors are
+// attached to vertices rather than positions, so perspective projections,
+// triangle transforms and sharing a triangle in a mesh leave the ordering
+// untouched. Vertices without an explicit color use the material color.
+// Degenerate triangles (whose barycentric coordinates are undefined) get a
+// finite equal-weight average instead of NaN.
+func (t *Triangle) VertexColorAt(p Vector) Color {
+	u, v, w := t.Barycentric(p)
+	base := t.Material.Color
+	c1, c2, c3 := base, base, base
+	if t.c1 {
+		c1 = t.C1
+	}
+	if t.c2 {
+		c2 = t.C2
+	}
+	if t.c3 {
+		c3 = t.C3
+	}
+	// Barycentric weights are undefined for a degenerate triangle (division
+	// by zero). Fall back to an equal-weight average, which is always finite.
+	if math.IsNaN(u) || math.IsInf(u, 0) || math.IsNaN(v) || math.IsInf(v, 0) ||
+		math.IsNaN(w) || math.IsInf(w, 0) {
+		u, v, w = 1.0/3.0, 1.0/3.0, 1.0/3.0
+	}
+	c := Color{}
+	c = c.Add(c1.MulScalar(u))
+	c = c.Add(c2.MulScalar(v))
+	c = c.Add(c3.MulScalar(w))
+	// Defense in depth: stored colors are already sanitized, this keeps any
+	// unforeseen non-finite arithmetic from escaping into the sampler.
+	return sanitizeColor(c)
 }
 
 func (t *Triangle) Compile() {
