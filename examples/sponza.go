@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 // http://graphics.cs.williams.edu/data/meshes/dabrovic-sponza.zip

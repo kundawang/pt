@@ -23,13 +23,21 @@ This is a CPU-only, unidirectional [path tracing](http://en.wikipedia.org/wiki/P
 
 ### Installation
 
-    go get -u github.com/fogleman/pt/pt
+This repository is a Go module (`github.com/fogleman/pt`). To use the
+library in your own module:
+
+    go get github.com/fogleman/pt/pt
+
+To build the command-line tools from a checkout:
+
+    go build ./cmd/combine ./cmd/despeckle
 
 ### Examples
 
-The are [lots of examples](https://github.com/fogleman/pt/tree/master/examples) to learn from! To try them, just run, e.g.
+The are [lots of examples](https://github.com/fogleman/pt/tree/master/examples) to learn from! Each example is its own `main` package marked with `//go:build ignore`, so run them individually from the repository root, e.g.
 
-    cd go/src/github.com/fogleman/pt
+    git clone https://github.com/fogleman/pt
+    cd pt
     go run examples/gopher.go
 
 ### Optional Embree Acceleration

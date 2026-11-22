@@ -1,11 +1,17 @@
+//go:build ignore
+
 package main
 
-import . "github.com/fogleman/pt/pt"
+import (
+	opensimplex "github.com/ojrac/opensimplex-go"
+
+	. "github.com/fogleman/pt/pt"
+)
 
 func main() {
 	scene := Scene{}
 	material := GlossyMaterial(White, 1.2, Radians(20))
-	noise := opensimplex.New()
+	noise := opensimplex.New(0)
 	n := 80
 	for i := 0; i < n; i++ {
 		for j := 0; j < n; j++ {
