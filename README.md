@@ -78,6 +78,66 @@ func main() {
 
 ![Hello World](http://i.imgur.com/0TXY0dX.png)
 
+### Deterministic sampling for render farms
+
+By default `pt` uses the historical random sampler: each worker owns a
+clock-seeded `math/rand` source, so the same scene renders differently on every
+run and across different core counts. That is fine for a single machine, but a
+render farm needs every worker to produce the same pixels.
+
+`pt` can instead draw every random number from a scrambled, low-discrepancy
+**Sobol** sequence keyed by `(seed, iteration, absolute pixel, sample ordinal,
+dimension)`. The sample value is a pure function of those indices, so worker
+count, scheduling, tiling and machine boundaries cannot change the image.
+
+```go
+cfg := pt.RenderConfig{
+    Mode:  pt.SampleModeSobol, // deterministic, low-discrepancy
+    Seed:  12345,              // same seed => same image everywhere
+    // Workers and Tiles may differ per machine without affecting output.
+}
+img := pt.RenderWithConfig(scene, &camera, sampler, 1920, 1080, -1, cfg)
+```
+
+The zero `RenderConfig{}` keeps the legacy random behavior, so existing code is
+unaffected. Low-level control is available too:
+
+```go
+seq := pt.NewSobol(12345)             // immutable; safe to share across goroutines
+v := seq.Value(pixel, sample, dim)    // deterministic value in [0, 1)
+r := pt.NewSobolRand(seq, pixel, 0)   // per-path cursor implementing pt.Random
+r.SeekTo(pixel, sample, 0)            // O(1) jump to any point
+```
+
+Guarantees:
+
+* **Reproducible across scheduling.** Same config + same seed yields
+  bit-identical pixels for any `Workers`, `Tiles` or region split.
+* **No shared mutable RNG.** `Sobol` is immutable; each path gets its own
+  `SobolRand` cursor.
+* **Defined edge cases.** Negative pixel/sample indices clamp to 0; `Skip` with
+  a non-positive count and `Intn(n <= 0)` are defined no-ops; non-finite seeds
+  are rejected by `NewSobolFromSeed`; dimensions past the 1024 available Sobol
+  dimensions switch to a documented deterministic hash rather than panicking.
+* **Auditable order.** `Sobol.TraceSamples` and a golden render-hash test pin
+  the exact sampling order, so changes are explicit.
+
+#### Splitting one image across machines
+
+`cmd/farm` renders regions independently and merges them. Because samples key
+on absolute pixel coordinates, the merged image is identical to rendering the
+whole frame on one machine.
+
+```
+farm plan   -scene spheres -w 1920 -h 1080 -shards 16
+farm render -scene spheres -w 1920 -h 1080 -shards 16 -shard 3 -seed 12345 -out shard3.png
+farm merge  -out final.png shard0.png shard1.png ...
+```
+
+Each shard gets a `.json` sidecar recording its region and sampling parameters;
+`farm merge` rejects mismatched seeds, overlapping regions or uncovered pixels
+instead of silently producing a corrupt image.
+
 ### Links
 
 Here are some resources that I have found useful.

@@ -2,7 +2,6 @@ package pt
 
 import (
 	"math"
-	"math/rand"
 )
 
 type LightMode int
@@ -29,7 +28,7 @@ const (
 )
 
 type Sampler interface {
-	Sample(scene *Scene, ray Ray, rnd *rand.Rand) Color
+	Sample(scene *Scene, ray Ray, rnd Random) Color
 }
 
 func NewSampler(firstHitSamples, maxBounces int) *DefaultSampler {
@@ -49,11 +48,11 @@ type DefaultSampler struct {
 	SpecularMode    SpecularMode
 }
 
-func (s *DefaultSampler) Sample(scene *Scene, ray Ray, rnd *rand.Rand) Color {
+func (s *DefaultSampler) Sample(scene *Scene, ray Ray, rnd Random) Color {
 	return s.sample(scene, ray, true, s.FirstHitSamples, 0, rnd)
 }
 
-func (s *DefaultSampler) sample(scene *Scene, ray Ray, emission bool, samples, depth int, rnd *rand.Rand) Color {
+func (s *DefaultSampler) sample(scene *Scene, ray Ray, emission bool, samples, depth int, rnd Random) Color {
 	if depth > s.MaxBounces {
 		return Black
 	}
@@ -121,7 +120,7 @@ func (s *DefaultSampler) sampleEnvironment(scene *Scene, ray Ray) Color {
 	return scene.Color
 }
 
-func (s *DefaultSampler) sampleLights(scene *Scene, n Ray, rnd *rand.Rand) Color {
+func (s *DefaultSampler) sampleLights(scene *Scene, n Ray, rnd Random) Color {
 	nLights := len(scene.Lights)
 	if nLights == 0 {
 		return Black
@@ -135,12 +134,12 @@ func (s *DefaultSampler) sampleLights(scene *Scene, n Ray, rnd *rand.Rand) Color
 		return result
 	} else {
 		// pick a random light
-		light := scene.Lights[rand.Intn(nLights)]
+		light := scene.Lights[rnd.Intn(nLights)]
 		return s.sampleLight(scene, n, rnd, light).MulScalar(float64(nLights))
 	}
 }
 
-func (s *DefaultSampler) sampleLight(scene *Scene, n Ray, rnd *rand.Rand, light Shape) Color {
+func (s *DefaultSampler) sampleLight(scene *Scene, n Ray, rnd Random, light Shape) Color {
 	// get bounding sphere center and radius
 	var center Vector
 	var radius float64
@@ -158,18 +157,31 @@ func (s *DefaultSampler) sampleLight(scene *Scene, n Ray, rnd *rand.Rand, light 
 	// get random point in disk
 	point := center
 	if s.SoftShadows {
-		for {
-			x := rnd.Float64()*2 - 1
-			y := rnd.Float64()*2 - 1
-			if x*x+y*y <= 1 {
-				l := center.Sub(n.Origin).Normalize()
-				u := l.Cross(RandomUnitVector(rnd)).Normalize()
-				v := l.Cross(u)
-				point = Vector{}
-				point = point.Add(u.MulScalar(x * radius))
-				point = point.Add(v.MulScalar(y * radius))
-				point = point.Add(center)
-				break
+		if _, ok := rnd.(*SobolRand); ok {
+			// Deterministic mode uses concentric disk sampling so the number
+			// of dimensions consumed is fixed. Rejection sampling would
+			// desynchronize the Sobol sequence across paths.
+			x, y := ConcentricDisk(rnd.Float64(), rnd.Float64())
+			l := center.Sub(n.Origin).Normalize()
+			u, v := OrthonormalBasis(l)
+			point = Vector{}
+			point = point.Add(u.MulScalar(x * radius))
+			point = point.Add(v.MulScalar(y * radius))
+			point = point.Add(center)
+		} else {
+			for {
+				x := rnd.Float64()*2 - 1
+				y := rnd.Float64()*2 - 1
+				if x*x+y*y <= 1 {
+					l := center.Sub(n.Origin).Normalize()
+					u := l.Cross(RandomUnitVector(rnd)).Normalize()
+					v := l.Cross(u)
+					point = Vector{}
+					point = point.Add(u.MulScalar(x * radius))
+					point = point.Add(v.MulScalar(y * radius))
+					point = point.Add(center)
+					break
+				}
 			}
 		}
 	}

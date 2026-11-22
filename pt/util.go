@@ -6,7 +6,6 @@ import (
 	_ "image/jpeg"
 	"image/png"
 	"math"
-	"math/rand"
 	"os"
 	"path"
 	"strconv"
@@ -21,7 +20,57 @@ func Degrees(radians float64) float64 {
 	return radians * 180 / math.Pi
 }
 
-func Cone(direction Vector, theta, u, v float64, rnd *rand.Rand) Vector {
+// OrthonormalBasis returns two unit vectors perpendicular to n and to each
+// other. It uses Duff et al.'s branchless construction, which is continuous in
+// n and consumes no randomness. Deterministic samplers must use this rather
+// than a rejection-sampled vector: consuming a variable number of dimensions
+// per path would desynchronize the low-discrepancy sequence and give up its
+// stratification.
+func OrthonormalBasis(n Vector) (Vector, Vector) {
+	sign := 1.0
+	if n.Z < 0 {
+		sign = -1.0
+	}
+	a := -1.0 / (sign + n.Z)
+	b := n.X * n.Y * a
+	s := Vector{1 + sign*n.X*n.X*a, sign * b, -sign * n.X}
+	t := Vector{b, sign + n.Y*n.Y*a, -n.Y}
+	return s, t
+}
+
+// ConcentricDisk maps a point (u, v) in [0,1)^2 to a point inside the unit
+// disk using Shirley's concentric mapping. Unlike rejection sampling it always
+// consumes exactly two values, which deterministic samplers require.
+func ConcentricDisk(u, v float64) (float64, float64) {
+	a := 2*u - 1
+	b := 2*v - 1
+	if a == 0 && b == 0 {
+		return 0, 0
+	}
+	var r, phi float64
+	if math.Abs(a) > math.Abs(b) {
+		r = a
+		phi = (math.Pi / 4) * (b / a)
+	} else {
+		r = b
+		phi = (math.Pi / 2) - (math.Pi/4)*(a/b)
+	}
+	return r * math.Cos(phi), r * math.Sin(phi)
+}
+
+// coneBasis returns the tangent basis used to build a cone sample. SobolRand
+// selects the deterministic basis; every other Random (including the legacy
+// random path) keeps the historical rejection-sampled basis.
+func coneBasis(direction Vector, rnd Random) (Vector, Vector) {
+	if _, ok := rnd.(*SobolRand); ok {
+		return OrthonormalBasis(direction)
+	}
+	q := RandomUnitVector(rnd)
+	s := direction.Cross(q)
+	return s, direction.Cross(s)
+}
+
+func Cone(direction Vector, theta, u, v float64, rnd Random) Vector {
 	if theta < EPS {
 		return direction
 	}
@@ -29,9 +78,7 @@ func Cone(direction Vector, theta, u, v float64, rnd *rand.Rand) Vector {
 	m1 := math.Sin(theta)
 	m2 := math.Cos(theta)
 	a := v * 2 * math.Pi
-	q := RandomUnitVector(rnd)
-	s := direction.Cross(q)
-	t := direction.Cross(s)
+	s, t := coneBasis(direction, rnd)
 	d := Vector{}
 	d = d.Add(s.MulScalar(m1 * math.Cos(a)))
 	d = d.Add(t.MulScalar(m1 * math.Sin(a)))

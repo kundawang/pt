@@ -13,7 +13,9 @@ func V(x, y, z float64) Vector {
 	return Vector{x, y, z}
 }
 
-func RandomUnitVector(rnd *rand.Rand) Vector {
+// RandomUnitVector returns a uniformly distributed unit vector. A nil rnd
+// selects the global math/rand source, preserving the historical behavior.
+func RandomUnitVector(rnd Random) Vector {
 	for {
 		var x, y, z float64
 		if rnd == nil {

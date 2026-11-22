@@ -2,7 +2,6 @@ package pt
 
 import (
 	"math"
-	"math/rand"
 )
 
 type Ray struct {
@@ -25,11 +24,18 @@ func (n Ray) Reflectance(i Ray, n1, n2 float64) float64 {
 	return n.Direction.Reflectance(i.Direction, n1, n2)
 }
 
-func (r Ray) WeightedBounce(u, v float64, rnd *rand.Rand) Ray {
+func (r Ray) WeightedBounce(u, v float64, rnd Random) Ray {
 	radius := math.Sqrt(u)
 	theta := 2 * math.Pi * v
-	s := r.Direction.Cross(RandomUnitVector(rnd)).Normalize()
-	t := r.Direction.Cross(s)
+	var s, t Vector
+	if _, ok := rnd.(*SobolRand); ok {
+		// Deterministic samplers use a fixed orthonormal basis so they do not
+		// consume a variable number of dimensions (see OrthonormalBasis).
+		s, t = OrthonormalBasis(r.Direction)
+	} else {
+		s = r.Direction.Cross(RandomUnitVector(rnd)).Normalize()
+		t = r.Direction.Cross(s)
+	}
 	d := Vector{}
 	d = d.Add(s.MulScalar(radius * math.Cos(theta)))
 	d = d.Add(t.MulScalar(radius * math.Sin(theta)))
@@ -37,11 +43,11 @@ func (r Ray) WeightedBounce(u, v float64, rnd *rand.Rand) Ray {
 	return Ray{r.Origin, d}
 }
 
-func (r Ray) ConeBounce(theta, u, v float64, rnd *rand.Rand) Ray {
+func (r Ray) ConeBounce(theta, u, v float64, rnd Random) Ray {
 	return Ray{r.Origin, Cone(r.Direction, theta, u, v, rnd)}
 }
 
-func (i Ray) Bounce(info *HitInfo, u, v float64, bounceType BounceType, rnd *rand.Rand) (Ray, bool, float64) {
+func (i Ray) Bounce(info *HitInfo, u, v float64, bounceType BounceType, rnd Random) (Ray, bool, float64) {
 	n := info.Ray
 	material := info.Material
 	n1, n2 := 1.0, material.Index

@@ -2,7 +2,6 @@ package pt
 
 import (
 	"math"
-	"math/rand"
 )
 
 type Camera struct {
@@ -27,7 +26,11 @@ func (c *Camera) SetFocus(focalPoint Vector, apertureRadius float64) {
 	c.apertureRadius = apertureRadius
 }
 
-func (c *Camera) CastRay(x, y, w, h int, u, v float64, rnd *rand.Rand) Ray {
+// CastRay constructs a camera ray for pixel (x, y) with sub-pixel offsets
+// (u, v) in [0, 1). rnd is used only when depth of field is enabled (two
+// dimensions for the lens); pass a per-path Random to keep lens sampling
+// deterministic.
+func (c *Camera) CastRay(x, y, w, h int, u, v float64, rnd Random) Ray {
 	aspect := float64(w) / float64(h)
 	px := ((float64(x)+u-0.5)/(float64(w)-1))*2 - 1
 	py := ((float64(y)+v-0.5)/(float64(h)-1))*2 - 1
