@@ -43,15 +43,8 @@ func LightMaterial(color Color, emittance float64) Material {
 	return Material{color, nil, nil, nil, nil, 1, emittance, 1, 0, 0, -1, false}
 }
 
+// MaterialAt resolves the material of a shape at a point using the
+// default MaterialEvaluator (see transport.go).
 func MaterialAt(shape Shape, point Vector) Material {
-	material := shape.MaterialAt(point)
-	uv := shape.UV(point)
-	if material.Texture != nil {
-		material.Color = material.Texture.Sample(uv.X, uv.Y)
-	}
-	if material.GlossTexture != nil {
-		c := material.GlossTexture.Sample(uv.X, uv.Y)
-		material.Gloss = (c.R + c.G + c.B) / 3
-	}
-	return material
+	return DefaultMaterialEvaluator{}.MaterialAt(shape, point)
 }
