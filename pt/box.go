@@ -84,6 +84,30 @@ func (b *Box) Intersect(r Ray) (float64, float64) {
 	return t1, t2
 }
 
+// SurfaceArea returns the surface area of the box. Degenerate (flat or
+// inverted) boxes have a zero or negative volume and report zero area.
+func (b Box) SurfaceArea() float64 {
+	s := b.Size()
+	if s.X <= 0 || s.Y <= 0 || s.Z <= 0 {
+		return 0
+	}
+	return 2 * (s.X*s.Y + s.Y*s.Z + s.Z*s.X)
+}
+
+// IsFinite reports whether every bound component is a finite, non-NaN
+// floating point value. Infinite primitives (e.g. Plane) return false so
+// the tree builder can fall back to a leaf instead of producing NaN splits.
+func (b Box) IsFinite() bool {
+	for _, v := range []Vector{b.Min, b.Max} {
+		for _, x := range [3]float64{v.X, v.Y, v.Z} {
+			if math.IsNaN(x) || math.IsInf(x, 0) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (b *Box) Partition(axis Axis, point float64) (left, right bool) {
 	switch axis {
 	case AxisX:
