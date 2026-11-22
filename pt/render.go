@@ -1,10 +1,9 @@
 package pt
 
 import (
+	"context"
 	"fmt"
 	"image"
-	"math"
-	"math/rand"
 	"runtime"
 	"strings"
 	"sync"
@@ -26,69 +25,56 @@ func showProgress(start time.Time, rays uint64, i, h int) {
 	fmt.Printf("] %s %s ", DurationString(elapsed), NumberString(rps))
 }
 
+// render renders one pass over buf using the tiled scheduler. It preserves
+// the historical console output and GOMAXPROCS behavior.
 func render(scene *Scene, camera *Camera, sampler Sampler, samplesPerPixel int, buf *Buffer) {
+	_ = renderContext(context.Background(), scene, camera, sampler, samplesPerPixel, buf, RenderConfig{})
+}
+
+func renderContext(ctx context.Context, scene *Scene, camera *Camera, sampler Sampler, samplesPerPixel int, buf *Buffer, config RenderConfig) error {
 	w, h := buf.W, buf.H
 	ncpu := runtime.NumCPU()
+	if ncpu < 1 {
+		ncpu = 1
+	}
 	runtime.GOMAXPROCS(ncpu)
 	scene.Compile()
-	ch := make(chan int, h)
-	absSamples := int(math.Abs(float64(samplesPerPixel)))
+	absSamples := samplesPerPixel
+	if absSamples < 0 {
+		absSamples = -absSamples
+	}
 	fmt.Printf("%d x %d pixels, %d spp, %d cores\n", w, h, absSamples, ncpu)
 	start := time.Now()
 	scene.rays = 0
-	for i := 0; i < ncpu; i++ {
-		go func(i int) {
-			rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-			for y := i; y < h; y += ncpu {
-				for x := 0; x < w; x++ {
-					if samplesPerPixel <= 0 {
-						// random subsampling
-						for i := 0; i < absSamples; i++ {
-							fu := rnd.Float64()
-							fv := rnd.Float64()
-							ray := camera.CastRay(x, y, w, h, fu, fv, rnd)
-							sample := sampler.Sample(scene, ray, rnd)
-							buf.AddSample(x, y, sample)
-						}
-					} else {
-						// stratified subsampling
-						n := int(math.Sqrt(float64(samplesPerPixel)))
-						for u := 0; u < n; u++ {
-							for v := 0; v < n; v++ {
-								fu := (float64(u) + 0.5) / float64(n)
-								fv := (float64(v) + 0.5) / float64(n)
-								ray := camera.CastRay(x, y, w, h, fu, fv, rnd)
-								sample := sampler.Sample(scene, ray, rnd)
-								buf.AddSample(x, y, sample)
-							}
-						}
-					}
-					v := Clamp(buf.StandardDeviation(x, y).MaxComponent(), 0, 1)
-					v = math.Pow(v, 2)
-					extraSamples := int(64 * v)
-					for i := 0; i < extraSamples; i++ {
-						fu := rnd.Float64()
-						fv := rnd.Float64()
-						ray := camera.CastRay(x, y, w, h, fu, fv, rnd)
-						sample := sampler.Sample(scene, ray, rnd)
-						buf.AddSample(x, y, sample)
-					}
-				}
-				ch <- 1
-			}
-		}(i)
+	if config.Workers == 0 {
+		config.Workers = ncpu
 	}
-	showProgress(start, scene.RayCount(), 0, h)
-	for i := 0; i < h; i++ {
-		<-ch
-		showProgress(start, scene.RayCount(), i+1, h)
+	progress := config.Progress
+	config.Progress = func(done, total int) {
+		showProgress(start, scene.RayCount(), done, total)
+		if progress != nil {
+			progress(done, total)
+		}
 	}
+	r := NewRenderer(scene, camera, sampler, samplesPerPixel, config)
+	total := len(r.Tiles(w, h))
+	if total > 0 {
+		showProgress(start, scene.RayCount(), 0, total)
+	}
+	err := r.Render(ctx, buf)
 	fmt.Println()
+	return err
 }
 
-func writeImage(path string, buf *Buffer, channel Channel, wg *sync.WaitGroup) {
+func writeImage(ctx context.Context, path string, buf *Buffer, channel Channel, wg *sync.WaitGroup) {
 	defer wg.Done()
+	if ctx.Err() != nil {
+		return
+	}
 	im := buf.Image(channel)
+	if ctx.Err() != nil {
+		return
+	}
 	if err := SavePNG(path, im); err != nil {
 		panic(err)
 	}
@@ -100,25 +86,51 @@ func Render(scene *Scene, camera *Camera, sampler Sampler, w, h, samplesPerPixel
 	return buf.Image(ColorChannel)
 }
 
+// RenderContext renders a single pass into a new buffer using the tiled
+// scheduler, honoring ctx cancellation. The image returned alongside a
+// non-nil error contains whatever samples completed before cancellation.
+func RenderContext(ctx context.Context, scene *Scene, camera *Camera, sampler Sampler, w, h, samplesPerPixel int, config RenderConfig) (image.Image, error) {
+	buf := NewBuffer(w, h)
+	err := renderContext(ctx, scene, camera, sampler, samplesPerPixel, buf, config)
+	return buf.Image(ColorChannel), err
+}
+
 func IterativeRender(pathTemplate string, iterations int, scene *Scene, camera *Camera, sampler Sampler, w, h, samplesPerPixel int) image.Image {
+	im, _ := IterativeRenderContext(context.Background(), pathTemplate, iterations, scene, camera, sampler, w, h, samplesPerPixel, RenderConfig{})
+	return im
+}
+
+// IterativeRenderContext behaves like IterativeRender but stops scheduling
+// new iterations — and skips pending image writes — when ctx is cancelled.
+// It always waits for in-flight renders and writes to finish before
+// returning, so no goroutines are leaked.
+func IterativeRenderContext(ctx context.Context, pathTemplate string, iterations int, scene *Scene, camera *Camera, sampler Sampler, w, h, samplesPerPixel int, config RenderConfig) (image.Image, error) {
 	var wg sync.WaitGroup
 	scene.Compile()
 	buf := NewBuffer(w, h)
+	var err error
 	for i := 1; i <= iterations; i++ {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+			break
+		}
 		fmt.Printf("\n[Iteration %d of %d]\n", i, iterations)
-		render(scene, camera, sampler, samplesPerPixel, buf)
+		if e := renderContext(ctx, scene, camera, sampler, samplesPerPixel, buf, config); e != nil {
+			err = e
+			break
+		}
 		path := pathTemplate
 		if strings.Contains(path, "%") {
 			path = fmt.Sprintf(pathTemplate, i)
 		}
 		bufCopy := buf.Copy()
 		wg.Add(1)
-		go writeImage(path, bufCopy, ColorChannel, &wg)
+		go writeImage(ctx, path, bufCopy, ColorChannel, &wg)
 		wg.Add(1)
-		go writeImage("deviation.png", bufCopy, StandardDeviationChannel, &wg)
+		go writeImage(ctx, "deviation.png", bufCopy, StandardDeviationChannel, &wg)
 	}
 	wg.Wait()
-	return buf.Image(ColorChannel)
+	return buf.Image(ColorChannel), err
 }
 
 func ChannelRender(scene *Scene, camera *Camera, sampler Sampler, w, h, samplesPerPixel int) <-chan image.Image {
