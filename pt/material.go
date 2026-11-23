@@ -44,13 +44,21 @@ func LightMaterial(color Color, emittance float64) Material {
 }
 
 func MaterialAt(shape Shape, point Vector) Material {
+	return MaterialAtFootprint(shape, point, 0)
+}
+
+// MaterialAtFootprint is MaterialAt with a texture footprint measured in
+// texels, so mip-mapped textures are pre-filtered when minified. All of the
+// material's texture slots share the same level-selection strategy; a
+// footprint of zero reproduces MaterialAt exactly.
+func MaterialAtFootprint(shape Shape, point Vector, footprint float64) Material {
 	material := shape.MaterialAt(point)
 	uv := shape.UV(point)
 	if material.Texture != nil {
-		material.Color = material.Texture.Sample(uv.X, uv.Y)
+		material.Color = SampleWithFootprint(material.Texture, uv.X, uv.Y, footprint)
 	}
 	if material.GlossTexture != nil {
-		c := material.GlossTexture.Sample(uv.X, uv.Y)
+		c := SampleWithFootprint(material.GlossTexture, uv.X, uv.Y, footprint)
 		material.Gloss = (c.R + c.G + c.B) / 3
 	}
 	return material
